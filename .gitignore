@@ -1,0 +1,32 @@
+# 密钥，切勿提交
+.env
+
+# 虚拟环境
+.venv/
+venv/
+
+# 向量库（由 knowledge/*.md 重新灌库即可再生，无需入库）
+chroma_db/
+
+# 业务数据（敏感，且体积大，不入库）
+data/
+
+# 数据查询生成的图表（运行时产物）
+static/
+
+# 预处理缓存（可由 Excel 重新生成）
+*.parquet
+
+# 请求日志库（运行时产物）
+logs/
+
+# HuggingFace 模型缓存
+.cache/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# PyCharm
+.idea/

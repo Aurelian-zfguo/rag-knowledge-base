@@ -1,0 +1,17 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.git/
+.gitignore
+.idea/
+.env
+chroma_db/
+data/
+static/
+logs/
+*.db
+*.parquet
+.DS_Store

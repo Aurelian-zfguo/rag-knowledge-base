@@ -1,0 +1,42 @@
+services:
+  # 服务 1：FastAPI 检索服务
+  rag-api:
+    image: rag-kb:latest
+    container_name: rag-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./chroma_db:/app/chroma_db
+      - ./data:/app/data
+      - ./static:/app/static
+    env_file:
+      - .env
+    networks:
+      - rag-net
+    restart: unless-stopped
+    # 使用镜像默认 CMD：uvicorn api:app --host 0.0.0.0 --port 8000
+
+  # 服务 2：Streamlit 问答界面
+  rag-ui:
+    image: rag-kb:latest
+    container_name: rag-ui
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./chroma_db:/app/chroma_db
+      - ./data:/app/data
+      - ./static:/app/static
+    env_file:
+      - .env
+    networks:
+      - rag-net
+    depends_on:
+      - rag-api
+    restart: unless-stopped
+    # 覆盖镜像默认 CMD，改启动 Streamlit
+    command: ["streamlit", "run", "app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+
+# 自定义网络：让两个服务在同一个可寻址的网络里
+networks:
+  rag-net:
+    driver: bridge

@@ -1,0 +1,50 @@
+# RAG 知识库 —— 依赖清单
+# 环境：Python 3.14 / Windows
+# 安装：pip install -r requirements.txt
+#
+# 版本策略：锁定主版本号（>=x.y,<x+1）。
+# LangChain / Chroma / transformers 均已进入 1.x 或 5.x 时代，与网上多数
+# 0.x 教程的 API 不同；锁住主版本可避免下次安装被自动升级到不兼容的大版本。
+
+# ---------- LangChain 核心与官方集成 ----------
+langchain>=1.3,<2
+langchain-text-splitters>=1.1,<2
+langchain-deepseek>=1.1,<2            # DeepSeek 对话模型
+langchain-huggingface>=1.2,<2         # 把本地 sentence-transformers 嵌入接入 LangChain
+langchain-chroma>=1.1,<2              # Chroma 集成（langchain_community.vectorstores.Chroma 已废弃）
+
+# ---------- 向量库 ----------
+chromadb>=1.5,<2
+
+# ---------- 嵌入模型 ----------
+# 本地运行 BAAI/bge-small-zh-v1.5，会连带安装 torch（约 2-3GB）与 transformers
+sentence-transformers>=6.0,<7
+
+# ---------- 文档解析 ----------
+pypdf>=6.16,<7
+python-docx>=1.2,<2
+
+# ---------- 结构化数据与图表 ----------
+openpyxl>=3.1,<4                    # 读取 .xlsx
+matplotlib>=3.9,<4                  # 图表生成
+pandas>=2.2,<4                      # 数据处理
+pyarrow>=17,<26                     # Parquet 缓存读写
+
+# ---------- Web 界面 ----------
+streamlit>=1.62,<2
+
+# ---------- 配置与测试 ----------
+python-dotenv>=1.2,<2
+pytest>=9.1,<10
+requests>=2.32,<3                   # DeepSeek API 直接调用（对齐项目 A client.py）
+
+# ---------- 评估（RAGAS，仅评估时使用） ----------
+# 注意：ragas 0.4.3 与 LangChain 1.x 存在已知兼容性问题（依赖 langchain_community
+# 已移除的 vertexai 模块）。scripts/evaluate_ragas.py 已内置兼容 shim 自动处理。
+ragas==0.4.3
+langchain-openai>=1.1,<2
+scikit-network==0.12.1              # 固定此版本：更高版本在 Python 3.14 无预编译 wheel
+
+# ---------- 预留：后续 API 化时使用，当前代码未引用 ----------
+fastapi>=0.141,<1
+uvicorn>=0.52,<1
