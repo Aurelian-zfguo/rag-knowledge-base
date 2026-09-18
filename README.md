@@ -1,129 +1,132 @@
-# RAG 知识库（项目 B）
+# RAG 知识库（企业知识问答 + 数据分析）
 
-基于 LangChain + Chroma + Streamlit 的 PCB 投料/余数管理知识库问答系统。支持制度文档检索（RAG）与结构化 Excel 数据查询（含图表），并提供 FastAPI 检索服务供项目 A 联动调用。
+> 制度文档问答 + Excel 数据查询，带来源引用和自动图表。
+
+## 背景
+
+面向 PCB 投料/余数管理场景，解决两类问题：一是制度文档（管控红线、编码规则、工艺对照表）的「问得到、答得准」；二是历史报废率等结构化数据的「查得了、看得懂」。服务对象为业务/稽查人员，答案必须可溯源、不编造。
+
+## 核心能力
+
+- 制度文档 RAG 问答（Chroma + BGE 嵌入，答案附来源引用）
+- 两阶段检索 + Rerank 精排（BGE 向量召回 Top-10 → bge-reranker-v2-m3 精排输出 Top-4）
+- Excel 结构化数据查询 + 自动出图（按工厂/表面处理/层数/工艺类型分组）
+- 多轮对话 + Query Rewriting（指代消解）
+- RAGAS 量化评估：Faithfulness 1.00 / ContextPrecision 0.93 / AnswerRelevancy 0.87
+- Docker Compose 双服务编排（FastAPI + Streamlit）
 
 ## 技术栈
 
-- **嵌入模型**：本地 `BAAI/bge-small-zh-v1.5`
-- **重排序**：本地 `BAAI/bge-reranker-v2-m3`（可开关）
-- **向量库**：Chroma（本地持久化）
-- **大模型**：DeepSeek API
-- **前端**：Streamlit
-- **检索服务**：FastAPI
-
-## 主要模块
-
-| 模块 | 职责 |
+| 层 | 技术 |
 |---|---|
-| `app.py` | Streamlit 问答界面 |
-| `api.py` | FastAPI 检索服务（供项目 A 调用） |
-| `ingest.py` | 灌库脚本（知识文档 → 向量库） |
-| `src/retriever.py` | 两阶段检索（向量召回 + Rerank） |
-| `src/qa_chain.py` | 意图路由 + 问答链路 |
-| `src/data_tool.py` | Excel 数据查询与图表 |
-| `config/dimensions.yaml` | 可分组维度配置 |
+| 语言 | Python 3.14 |
+| 框架 | LangChain 1.x |
+| 向量库 | Chroma（本地持久化） |
+| 嵌入 | BAAI/bge-small-zh-v1.5 |
+| 重排序 | BAAI/bge-reranker-v2-m3 |
+| 大模型 | DeepSeek API（OpenAI 兼容接口） |
+| 检索服务 | FastAPI |
+| 前端 | Streamlit |
+| 容器化 | Docker + docker-compose |
 
-详细架构见 `docs/项目B_模块职责与数据流.md`，量化评估见 `docs/项目B_RAGAS评估.md`。
+## 架构
 
-### 项目文档（docs/ 目录）
-
-| 文档 | 说明 |
-|---|---|
-| `项目B_模块职责与数据流.md` | 模块职责、数据流、配置点、Rerank 接入与降级 |
-| `项目B_RAGAS评估.md` | RAGAS 量化评估闭环（发现 bug → 修复 → 指标提升） |
-| `Docker容器化部署指南.md` | 镜像构建、一键启动、验证、卷/环境变量、运维命令 |
-| `Docker容器化踩坑记录.md` | Docker 安装到运行全过程的踩坑记录与根因分析 |
-
----
-
-## 本地运行（不依赖 Docker）
-
-```bash
-# 1. 创建虚拟环境
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1        # PowerShell（cmd 用 activate.bat）
-
-# 2. 先装 CPU 版 torch（避免拉 2GB+ GPU 版）
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-
-# 3. 装其余依赖
-pip install -r requirements.txt
-
-# 4. 配置环境变量
-copy .env.example .env               # 然后填入 DEEPSEEK_API_KEY
-
-# 5. 灌库（首次/更新知识文档后）
-python ingest.py
-
-# 6. 启动问答界面
-streamlit run app.py
+```mermaid
+flowchart LR
+    A[用户提问] --> B{意图路由}
+    B -->|数据类关键词| C[data_tool<br/>Excel 查询]
+    B -->|RAG 类| D[向量召回<br/>BGE 嵌入]
+    D --> E[Rerank 精排]
+    E --> F[DeepSeek 生成]
+    C --> G[返回 文字+图表]
+    F --> H[返回 答案+来源]
 ```
 
----
+## 快速开始
 
-## Docker 部署
+### 本地运行
 
-### 前置要求
+```bash
+# 1. 环境准备
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1          # PowerShell（cmd 用 activate.bat）
+pip install torch --index-url https://download.pytorch.org/whl/cpu   # 先装 CPU 版 torch
+pip install -r requirements.txt
 
-- Docker Desktop（含 WSL 2，已验证）
-- Docker Desktop 内存建议 ≥ 8GB（两个容器各加载一套 embedding + Rerank 模型）
+# 2. 配置 .env
+copy .env.example .env                # 填入 DEEPSEEK_API_KEY
 
-### 一条命令启动
+# 3. 灌库（首次/更新知识文档后）
+python ingest.py
+
+# 4. 启动 Streamlit
+streamlit run app.py
+
+# 5. 启动 API（可选，供其他系统调用）
+python api.py
+```
+
+### Docker 运行
 
 ```bash
 docker compose up -d
 ```
 
-> 首次启动需先构建镜像（见下），或直接：
-> ```bash
-> docker build -t rag-kb:latest .
-> docker compose up -d
-> ```
+| 服务 | 地址 |
+|---|---|
+| FastAPI 检索服务 | http://localhost:8000 |
+| Streamlit 问答界面 | http://localhost:8501 |
 
-### 服务地址
+## 项目结构
 
-| 服务 | 地址 | 说明 |
-|---|---|---|
-| FastAPI 检索服务 | http://localhost:8000 | `/health`、`/retrieve` |
-| Streamlit 问答界面 | http://localhost:8501 | 浏览器打开 |
-
-### 验证
-
-```bash
-curl http://localhost:8000/health          # 期望 {"status":"ok"}
+```
+RAG知识库/
+├── api.py               # FastAPI 检索服务
+├── app.py               # Streamlit 问答界面
+├── ingest.py            # 灌库脚本
+├── config.py            # 配置中心（统一 getter + 校验）
+├── config/
+│   └── dimensions.yaml  # 可分组维度配置（加维度不改代码）
+├── knowledge/           # 知识源 Markdown（9 个主题）
+├── data/                # 业务数据（gitignore，不提交）
+├── docs/                # 架构/评估/部署/踩坑文档
+├── scripts/
+│   └── evaluate_ragas.py  # RAGAS 评估入口
+├── src/
+│   ├── retriever.py     # 两阶段检索（向量 + Rerank）
+│   ├── embeddings.py    # BGE 嵌入封装
+│   ├── reranker.py      # Rerank 模型封装
+│   ├── qa_chain.py      # 意图路由 + 问答链路
+│   ├── data_tool.py     # Excel 查询与图表
+│   ├── llm_client.py    # DeepSeek 调用客户端
+│   ├── loader.py        # 文档加载与切片
+│   └── request_logger.py # API 请求日志（SQLite）
+└── tests/               # 单元测试
 ```
 
-完整部署说明见 `docs/Docker容器化部署指南.md`，踩坑记录见 `docs/Docker容器化踩坑记录.md`。
+## 核心设计
 
----
+1. **两阶段检索 + Rerank**：先 BGE 向量召回 Top-N 候选，再用交叉编码器精排到 Top-k，兼顾召回与精度；Rerank 模型加载失败自动降级为纯向量检索，不中断服务。
 
-## RAGAS 评估
+2. **Query Rewriting**：多轮对话中「那第二条呢」这类指代性提问，先用历史把 query 补全成独立检索语句，再进向量库，解决指代导致的召回不准；单轮不触发，零额外成本。
 
-项目已接入 RAGAS 量化评估体系，对 15 条样本（覆盖制度定义/管控措施/编码规则/工艺类型）完成评估：
+3. **维度配置化**：`dimensions.yaml` 定义可分组维度（表面处理/层数/工艺类型等）的列名、触发关键词、label 映射。新增维度只需加配置，无需改 `data_tool.py` 路由代码。
 
-| 指标 | 得分 |
-|---|---|
-| Faithfulness（忠实度） | 1.00 |
-| Answer Relevancy（答案相关性） | 0.87 |
-| Context Precision（上下文精度） | 0.93 |
+4. **RAGAS 评估闭环**：接入量化评估后，真实发现了「编码含义解释」被误判为「数据查询」的路由 bug（`物料编码 XXX 第几位是什么` 返回未找到），修复后三个指标全面回升。
 
-完整报告见 `evaluation_report.md`，评估闭环记录见 `docs/项目B_RAGAS评估.md`。
+5. **Docker 同步预加载模型**：容器启动时同步加载 embedding + Rerank 模型，避免首次 `/retrieve` 因模型未就绪而超时降级；代价是启动慢约 10-30 秒，换来启动后所有请求都走完整链路。
 
-重新评估：
+## 测试
 
 ```bash
-python scripts/evaluate_ragas.py          # 全量 15 条
-python scripts/evaluate_ragas.py --limit 3  # 冒烟测试
+python -m unittest discover -s tests
 ```
 
----
+当前 50 个测试全部通过，覆盖意图路由、多轮历史裁剪、Query Rewriting、Rerank 降级、数据查询等。
 
-## 其他入口
+## 注意事项
 
-| 想做什么 | 命令 |
-|---|---|
-| 灌库 | `python ingest.py` |
-| 环境校验 | `python config.py` |
-| 数据查询测试 | `python -c "from src.data_tool import query_excel; print(query_excel('金州厂各工艺类型的报废率对比','金州厂'))"` |
-| RAGAS 评估 | `python scripts/evaluate_ragas.py` |
-| 运行测试 | `python -m unittest discover -s tests` |
+- 本仓库**不含真实业务数据**（`data/`、`chroma_db/`、`static/`、`logs/` 均已 gitignore）。
+- 首次启动需下载 BGE 模型（约 95MB）+ Rerank 模型（约 1.2GB）。
+- 需配置 `DEEPSEEK_API_KEY`（`.env`，勿提交）。
+- 详细说明见 `docs/` 下的架构、评估、部署、踩坑文档。
