@@ -1,0 +1,46 @@
+# 可分组维度配置（分类对比维度由本文件驱动，新增维度无需改代码）
+# 每个维度字段：
+#   key              维度唯一标识（代码中用它识别）
+#   column           长表中对应的列名
+#   display_name     图表标题与文字说明中使用的名称
+#   keywords         触发该维度的关键词（须配合通用对比词 所有/各种/不同/按/对比/比较）
+#   exclusive_keywords  该维度专属关键词，出现即直接触发，无需通用对比词
+#   codes            可选，该维度的合法取值（仅表面处理码这类有限集合使用）
+#   label_suffix     可选，横轴标签追加的后缀（如层数显示「02层」）
+#   label_mapping    可选，指向 markdown 对照表文件，自动解析为「码→中文名」映射
+
+dimensions:
+  - key: surface
+    column: 表面处理码
+    display_name: 表面处理方式
+    keywords: ["表面处理", "处理方式", "表面处理码", "表面处理编码", "编码"]
+    exclusive_keywords: []
+    codes: "CHLFTNPXJWESM"
+    label_suffix: ""
+
+  - key: layer
+    column: 层数
+    display_name: 层数
+    keywords: ["层数"]
+    exclusive_keywords: ["分层", "各层", "按层", "不同层"]
+    label_suffix: "层"
+
+  - key: process_type
+    column: 工艺类型码
+    display_name: 工艺类型
+    keywords: ["工艺类型", "板件类型", "板类型"]
+    exclusive_keywords:
+      ["HDI", "普通板", "高频板", "镀金手指", "埋容埋阻板", "软硬结合板",
+       "高散热板", "背板", "阶梯板", "电厚金板", "任意阶互联", "小片板",
+       "长短/断金手指板", "铝、铜、铁基板", "≥50Z"]
+    label_suffix: ""
+    # 仅存 knowledge/ 目录下的文件名，完整路径由 config.resolve_knowledge_path() 补全
+    label_mapping: 05-工艺类型码对照表.md
+
+  # 示例：客户等级（当前数据中暂无该列）。仅新增本配置即可扩展，无需改代码。
+  - key: customer_level
+    column: 客户等级
+    display_name: 客户等级
+    keywords: ["客户等级"]
+    exclusive_keywords: ["等级"]
+    label_suffix: ""
