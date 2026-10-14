@@ -65,6 +65,9 @@ CHUNK_SIZE = 1024      # 单个切块的字符上限，超过则二次切分
 CHUNK_OVERLAP = 128    # 二次切分时的重叠字符数
 TOP_K = 4              # 检索返回的片段数
 
+# 混合检索开关：true=向量 + BM25 双路召回后 RRF 融合；false=纯向量（默认，便于对比）。
+ENABLE_HYBRID = os.getenv("ENABLE_HYBRID", "false").strip().lower() in ("true", "1", "yes", "on")
+
 # 多轮对话保留的最近轮数（1 轮 = 1 问 1 答 = 2 条消息），超过部分从最旧丢弃。
 MAX_HISTORY_TURNS = 3
 

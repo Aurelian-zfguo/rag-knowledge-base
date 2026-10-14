@@ -13,6 +13,10 @@
         "source": "07-补投管控措施.md",         # 来源文件名
         "header": "第 1 条：投料标准与超标审批",  # 所属二级标题
         "title":  "补投管控措施",                # 所属一级标题
+        "version": "1.0",                        # 文档版本（frontmatter version:）
+        "deprecated": False,                     # 失效标记（旧版置 True）
+        "file_hash": "a1b2...",                  # 源文件内容哈希（增量比对）
+        "chunk_id":  "c3d4...",                  # 内容寻址确定性 id（upsert 幂等）
     }
 
 单独运行本模块可打印切片统计，用于验证切块质量::
@@ -22,6 +26,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from collections import Counter
 from pathlib import Path
@@ -63,14 +68,65 @@ def find_markdown_files(knowledge_dir: Path | None = None) -> list[Path]:
     return sorted(directory.glob("*.md"))
 
 
+def _compute_file_hash(path: Path) -> str:
+    """返回文件的 MD5 内容哈希（十六进制小写），供增量灌库比对文件是否变化。"""
+    return hashlib.md5(path.read_bytes()).hexdigest()
+
+
+def _read_version(text: str) -> str:
+    """从 Markdown 头部 YAML frontmatter 读取 version，缺省返回 "1.0"。
+
+    只识别文档最开头的 ``---`` ... ``---`` 块；没有 frontmatter 或没有
+    ``version:`` 字段时返回默认值，不抛异常。当前 knowledge/ 下 9 篇文档
+    均无 frontmatter，故版本全部缺省为 "1.0"。
+    """
+    if not text.startswith("---"):
+        return "1.0"
+    lines = text.splitlines()
+    end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
+    if end is None:
+        return "1.0"
+    for line in lines[1:end]:
+        if line.startswith("version:"):
+            value = line.split(":", 1)[1].strip().strip('"').strip("'")
+            return value or "1.0"
+    return "1.0"
+
+
+def _make_chunk_id(file_hash: str, header: str, content: str) -> str:
+    """生成内容寻址的确定性 chunk id：同一份内容永远得到同一个 id。
+
+    这样 ingest 用 ``upsert`` 时，内容没变的块会被原地覆盖（幂等），内容变了的
+    块得到新 id，旧的再被标记 deprecated 过滤掉。
+    """
+    return hashlib.md5(f"{file_hash}\x00{header}\x00{content}".encode("utf-8")).hexdigest()
+
+
+def _is_headerless(chunk: Document) -> bool:
+    """判断切块是否来自「无标题文档」：header 与 title 均为空。
+
+    MarkdownHeaderTextSplitter 对没有 #/## 的文档会返回单个 header/title 均为空的
+    整块；此时没有标题可当语义边界，需走「段落 → 句子 → 字符」降级阶梯。
+    """
+    return not chunk.metadata.get("header") and not chunk.metadata.get("title")
+
+
 def _split_one_file(
     path: Path,
     header_splitter: MarkdownHeaderTextSplitter,
     fallback_splitter: RecursiveCharacterTextSplitter,
     chunk_size: int,
 ) -> list[Document]:
-    """切分单个 Markdown 文件，返回带完整 metadata 的切块列表。"""
-    header_chunks = header_splitter.split_text(path.read_text(encoding="utf-8"))
+    """切分单个 Markdown 文件，返回带完整 metadata 的切块列表。
+
+    每个切块额外带 4 个 metadata（供增量灌库与检索过滤使用）：
+        version     —— 文档版本，来自 frontmatter ``version:``，缺省 "1.0"
+        deprecated  —— 失效标记，旧版本块置 True，检索时过滤
+        file_hash   —— 源文件内容哈希，用于增量比对
+        chunk_id    —— 内容寻址的确定性 id（同内容同 id），供 upsert 幂等
+    """
+    raw_text = path.read_text(encoding="utf-8")
+    header_chunks = header_splitter.split_text(raw_text)
 
     documents: list[Document] = []
     for chunk in header_chunks:
@@ -82,10 +138,56 @@ def _split_one_file(
 
         if len(chunk.page_content) <= chunk_size:
             documents.append(chunk)
+            continue
+
+        # 超长块二次切分。fallback_splitter 的 CHINESE_SEPARATORS 顺序即成本阶梯
+        # 「标题 → 段落 → 句子 → 字符」的后三级：\n\n(段落) → \n → 中文句读
+        # （。；！？，、）→ 固定长度 + CHUNK_OVERLAP 滑动窗口，尽量落在语义边界、
+        # 不按单字硬切。
+        if _is_headerless(chunk):
+            # 无标题降级：原文无 #/##，整篇是一块、header 与 title 均为空，没有
+            # 标题当语义边界，只能靠段落/句读/固定长度这条阶梯。
+            # 更贵的语义切分/LLM 切分不实现，只作话术（能用便宜规则就不上模型）。
+            documents.extend(fallback_splitter.split_documents([chunk]))
         else:
-            # 超长块才二次切分；metadata 由 split_documents 自动复制到每个子块。
+            # 有标题但某标题下超长：同一 fallback_splitter 二次切分。
             documents.extend(fallback_splitter.split_documents([chunk]))
 
+    file_hash = _compute_file_hash(path)
+    version = _read_version(raw_text)
+    for doc in documents:
+        doc.metadata["version"] = version
+        doc.metadata["deprecated"] = False
+        doc.metadata["file_hash"] = file_hash
+        doc.metadata["chunk_id"] = _make_chunk_id(
+            file_hash, doc.metadata.get("header", ""), doc.page_content)
+    return documents
+
+
+def split_files(
+    files: list[Path],
+    chunk_size: int = config.CHUNK_SIZE,
+    chunk_overlap: int = config.CHUNK_OVERLAP,
+) -> list[Document]:
+    """只切分给定文件列表（供增量灌库：只重新切分变化的文件）。"""
+    header_splitter = MarkdownHeaderTextSplitter(
+        headers_to_split_on=HEADERS_TO_SPLIT_ON,
+        # 保留标题行在正文中：标题往往含「表面处理码」「补投」这类关键检索词，
+        # 剥离后会削弱该块的向量表征。
+        strip_headers=False,
+    )
+    fallback_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=CHINESE_SEPARATORS,
+        length_function=len,
+    )
+
+    documents: list[Document] = []
+    for path in files:
+        documents.extend(
+            _split_one_file(path, header_splitter, fallback_splitter, chunk_size)
+        )
     return documents
 
 
@@ -115,25 +217,7 @@ def load_and_split(
             "请先在该目录放入知识文档，再重新运行。"
         )
 
-    header_splitter = MarkdownHeaderTextSplitter(
-        headers_to_split_on=HEADERS_TO_SPLIT_ON,
-        # 保留标题行在正文中：标题往往含「表面处理码」「补投」这类关键检索词，
-        # 剥离后会削弱该块的向量表征。
-        strip_headers=False,
-    )
-    fallback_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        separators=CHINESE_SEPARATORS,
-        length_function=len,
-    )
-
-    documents: list[Document] = []
-    for path in files:
-        documents.extend(
-            _split_one_file(path, header_splitter, fallback_splitter, chunk_size)
-        )
-    return documents
+    return split_files(files, chunk_size, chunk_overlap)
 
 
 def print_statistics(documents: list[Document], files: list[Path]) -> None:

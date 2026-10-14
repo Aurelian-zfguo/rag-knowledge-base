@@ -89,14 +89,90 @@ def search(query: str, top_k: int = config.TOP_K) -> list[tuple[Document, float]
         )
 
     # 第一阶段：向量召回 Top-N（至少 10 个候选，供精排）
+    # filter 过滤掉 deprecated=True 的失效块（旧版本/已删除文档），实现软删除。
     recall_k = max(10, top_k * 2)
-    candidates = store.similarity_search_with_score(query, k=recall_k)
+    candidates = store.similarity_search_with_score(
+        query, k=recall_k, filter={"deprecated": False})
 
     # 第二阶段：Rerank 精排（可降级）
     if config.get_rerank_config()["enabled"] and _rerank_available():
         return rerank(query, candidates, top_k)
 
     return candidates[:top_k]
+
+
+def rrf_fusion(
+    ranked_lists: list[list[tuple[Document, float]]],
+    k: int = 60,
+) -> list[tuple[Document, float]]:
+    """Reciprocal Rank Fusion（RRF）融合多个已排序的召回列表并去重。
+
+    对每个 chunk，把它在各路中的名次贡献累加：``score = Σ 1/(k + rank)``，
+    rank 为 0 起始名次。k=60 是经典值。返回按融合分降序的 ``(Document, score)``。
+
+    同一条 chunk 出现在多路（如向量和 BM25 都召回它）时，分数自然累加，等效去重。
+    """
+    scores: dict[str, float] = {}
+    docs: dict[str, Document] = {}
+    for ranked in ranked_lists:
+        for doc, rank in ranked:
+            key = doc.metadata.get("chunk_id") or doc.page_content
+            scores[key] = scores.get(key, 0.0) + 1.0 / (k + int(rank))
+            docs[key] = doc
+    return sorted(
+        ((docs[key], scores[key]) for key in scores),
+        key=lambda item: item[1], reverse=True,
+    )
+
+
+def hybrid_search(query: str, top_k: int | None = None) -> list[tuple[Document, float]]:
+    """混合检索：向量 + BM25 双路召回 → RRF 融合 → Rerank 精排。
+
+    - ``config.ENABLE_HYBRID`` 为 False（默认）时，直接走纯向量 ``search``；
+    - BM25 索引构建失败（依赖缺失/库为空）时，降级为纯向量，不影响主流程。
+
+    Returns:
+        ``(Document, score)`` 列表。融合分「越大越相关」（经 Rerank 后转为负数口径）。
+    """
+    top_k = top_k or config.TOP_K
+
+    # 开关未开启 → 纯向量（等同 search）
+    if not config.ENABLE_HYBRID:
+        return search(query, top_k)
+
+    if not query or not query.strip():
+        raise ValueError("检索内容不能为空。")
+
+    store = load_vectorstore()
+    if len(store.get(limit=1)["ids"]) == 0:
+        raise RuntimeError(
+            f"向量库集合 {config.COLLECTION_NAME} 为空。\n"
+            "请先运行 python ingest.py 完成灌库。"
+        )
+
+    recall_k = max(10, top_k * 2)
+
+    # 向量召回（带 deprecated 过滤，与 search 一致）
+    vector_candidates = store.similarity_search_with_score(
+        query, k=recall_k, filter={"deprecated": False})
+
+    # BM25 关键词召回；任何异常（依赖缺失/索引失败）都降级为纯向量
+    try:
+        from src.bm25 import bm25_search  # 延迟导入，避免循环依赖
+        bm25_ranked = bm25_search(query, top_k=recall_k)
+    except Exception:
+        bm25_ranked = []
+
+    if bm25_ranked:
+        vector_ranked = [(doc, float(i)) for i, (doc, _) in enumerate(vector_candidates)]
+        fused = rrf_fusion([vector_ranked, bm25_ranked], k=60)
+    else:
+        fused = vector_candidates
+
+    # Rerank 精排（可降级为纯向量前 top_k）
+    if config.get_rerank_config()["enabled"] and _rerank_available():
+        return rerank(query, fused, top_k)
+    return fused[:top_k]
 
 
 if __name__ == "__main__":
