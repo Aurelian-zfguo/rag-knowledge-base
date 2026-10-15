@@ -40,11 +40,14 @@ flowchart LR
     A[用户提问] --> B{意图路由}
     B -->|数据类关键词| C[data_tool<br/>Excel 查询]
     B -->|RAG 类| D[向量召回<br/>BGE 嵌入]
+    D -. ENABLE_HYBRID .-> BM25[BM25 关键词召回]
     D --> E[Rerank 精排]
     E --> F[DeepSeek 生成]
     C --> G[返回 文字+图表]
     F --> H[返回 答案+来源]
 ```
+
+> 虚线为可选混合检索路径，`ENABLE_HYBRID` 默认关。
 
 ## 快速开始
 
